@@ -23,7 +23,18 @@ firebase_admin.initialize_app(cred, {
 ref = db.reference("satta")
 
 API_URL = "https://draw.ar-lottery01.com/WinGo/WinGo_1M/GetHistoryIssuePage.json"
-last_status = {"status": "Initializing...", "last_update": None}
+last_status = {"status": "Initializing...", "last_update": None, "api_status": None}
+
+# ✅ Browser-like headers
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://draw.ar-lottery01.com/",
+    "Origin": "https://draw.ar-lottery01.com",
+    "Connection": "keep-alive"
+}
 
 def get_size_label(number):
     return "SMALL" if number <= 4 else "BIG"
@@ -31,11 +42,18 @@ def get_size_label(number):
 def fetch_and_save():
     global last_status
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-            "Accept": "application/json"
-        }
-        response = requests.get(API_URL, headers=headers, timeout=10)
+        response = requests.get(API_URL, headers=HEADERS, timeout=10)
+        api_status_code = response.status_code
+        raw_text = response.text.strip()
+
+        if not raw_text:
+            last_status = {
+                "status": "❌ Fetch error: Empty response from API",
+                "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "api_status": api_status_code
+            }
+            return
+
         data = response.json()
         items = data["data"]["list"][:10]
 
@@ -53,12 +71,24 @@ def fetch_and_save():
                     "color": color,
                     "timestamp": timestamp
                 })
-                last_status = {"status": f"✅ Saved: {issue} → {number} ({size}) {color}", "last_update": timestamp}
+                last_status = {
+                    "status": f"✅ Saved: {issue} → {number} ({size}) {color}",
+                    "last_update": timestamp,
+                    "api_status": api_status_code
+                }
             else:
-                last_status = {"status": f"⚠️ Skipped (exists): {issue}", "last_update": timestamp}
+                last_status = {
+                    "status": f"⚠️ Skipped (exists): {issue}",
+                    "last_update": timestamp,
+                    "api_status": api_status_code
+                }
 
     except Exception as e:
-        last_status = {"status": f"❌ Fetch error: {str(e)}", "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        last_status = {
+            "status": f"❌ Fetch error: {str(e)}",
+            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "api_status": None
+        }
 
 def exact_one_minute_loop():
     while True:
@@ -79,7 +109,11 @@ def home():
       <head><title>Bot Status</title></head>
       <body style='font-family: Arial; text-align: center; margin-top: 50px;'>
         <h1 style='color: green;'>✅ Bot Chal Raha Hai</h1>
-        <p>Status check: <a href='/status'>/status</a> | Manual fetch: <a href='/fetch-now'>/fetch-now</a></p>
+        <p>
+          Status check: <a href='/status'>/status</a> |
+          Manual fetch: <a href='/fetch-now'>/fetch-now</a> |
+          Debug: <a href='/debug'>/debug</a>
+        </p>
       </body>
     </html>
     """
@@ -92,6 +126,18 @@ def status():
 def fetch_now():
     fetch_and_save()
     return jsonify({"message": "Manual fetch triggered", "status": last_status})
+
+@app.route("/debug")
+def debug():
+    try:
+        response = requests.get(API_URL, headers=HEADERS, timeout=10)
+        return jsonify({
+            "status_code": response.status_code,
+            "response_length": len(response.text),
+            "preview": response.text[:300]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 # ✅ Start background thread
 threading.Thread(target=exact_one_minute_loop, daemon=True).start()
